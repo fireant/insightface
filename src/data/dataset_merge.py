@@ -1,3 +1,6 @@
+# given two datasets merge them together into one dataset
+# when merging every image in the 
+
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -10,9 +13,6 @@ import argparse
 import cv2
 import time
 import sklearn
-from sklearn.decomposition import PCA
-from easydict import EasyDict as edict
-from sklearn.cluster import DBSCAN
 import numpy as np
 
 sys.path.append(os.path.join(os.path.dirname(__file__),'..', 'common'))
@@ -85,7 +85,9 @@ def main(args):
   model = None
   if len(args.model)>0:
     ctx = []
-    cvd = os.environ['CUDA_VISIBLE_DEVICES'].strip()
+    cvd = ''
+    if 'CUDA_VISIBLE_DEVICES' in os.environ:
+      cvd = os.environ['CUDA_VISIBLE_DEVICES'].strip()
     if len(cvd)>0:
       for i in xrange(len(cvd.split(','))):
         ctx.append(mx.gpu(i))
@@ -109,7 +111,7 @@ def main(args):
     model.bind(data_shapes=[('data', (args.batch_size, 3, image_size[0], image_size[1]))])
     model.set_params(arg_params, aux_params)
   else:
-    assert args.param1==0.0
+    assert args.similarity_threshold==0.0
   rec_list = []
   for ds in include_datasets:
     path_imgrec = os.path.join(ds, 'train.rec')
@@ -157,7 +159,7 @@ def main(args):
         id_item = id_list[i]
         y = id_item[2]
         sim = np.dot(X, y.T)
-        idx = np.where(sim>=args.param1)[0]
+        idx = np.where(sim>=args.similarity_threshold)[0]
         if len(idx)>0:
           continue
         all_id_list.append(id_item)
@@ -208,20 +210,20 @@ def main(args):
     #for id_item in all_id_list:
     #  X.append(id_item[2])
     #X = np.array(X)
-    #param1 = 0.3
-    #while param1<=1.01:
+    #similarity_threshold = 0.3
+    #while similarity_threshold<=1.01:
     #  emap = {}
     #  for id_item in _id_list:
     #    y = id_item[2]
     #    sim = np.dot(X, y.T)
     #    #print(sim.shape)
     #    #print(sim)
-    #    idx = np.where(sim>=param1)[0]
+    #    idx = np.where(sim>=similarity_threshold)[0]
     #    for j in idx:
     #      emap[j] = 1
     #  exclude_removed = len(emap)
-    #  print(param1, exclude_removed)
-    #  param1+=0.05
+    #  print(similarity_threshold, exclude_removed)
+    #  similarity_threshold+=0.05
 
       X = []
       for id_item in all_id_list:
@@ -284,8 +286,8 @@ if __name__ == '__main__':
   parser.add_argument('--output', default='', type=str, help='')
   parser.add_argument('--model', default='../model/softmax,50', help='path to load model.')
   parser.add_argument('--batch-size', default=32, type=int, help='')
-  parser.add_argument('--param1', default=0.3, type=float, help='')
-  parser.add_argument('--param2', default=0.4, type=float, help='')
+  parser.add_argument('--similarity_threshold_include', default=0.3, type=float, help='')
+  parser.add_argument('--similarity_threshold_exclude', default=0.4, type=float, help='')
   parser.add_argument('--mode', default=1, type=int, help='')
   parser.add_argument('--test', default=0, type=int, help='')
   args = parser.parse_args()
