@@ -21,15 +21,8 @@ import face_image
 sys.path.append(os.path.join(os.path.dirname(__file__),'..', 'eval'))
 import verification
 
-def ch_dev(arg_params, aux_params, ctx):
-  new_args = dict()
-  new_auxs = dict()
-  for k, v in arg_params.items():
-    new_args[k] = v.as_in_context(ctx)
-  for k, v in aux_params.items():
-    new_auxs[k] = v.as_in_context(ctx)
-  return new_args, new_auxs
-
+# use the given to get the embedding vectors for given images
+# the returned verctors are normalized  
 def get_embedding(args, imgrec, id, image_size, model):
   s = imgrec.read_idx(id)
   header, _ = mx.recordio.unpack(s)
@@ -102,7 +95,7 @@ def main(args):
     epoch = int(vec[1])
     print('loading',prefix, epoch)
     sym, arg_params, aux_params = mx.model.load_checkpoint(prefix, epoch)
-    #arg_params, aux_params = ch_dev(arg_params, aux_params, ctx)
+
     all_layers = sym.get_internals()
     sym = all_layers['fc1_output']
     #model = mx.mod.Module.load(prefix, epoch, context = ctx)
@@ -110,12 +103,14 @@ def main(args):
     model = mx.mod.Module(symbol=sym, context=ctx, label_names = None)
     model.bind(data_shapes=[('data', (args.batch_size, 3, image_size[0], image_size[1]))])
     model.set_params(arg_params, aux_params)
-  else:
-    assert args.similarity_threshold==0.0
+
   rec_list = []
   for ds in include_datasets:
     path_imgrec = os.path.join(ds, 'train.rec')
     path_imgidx = os.path.join(ds, 'train.idx')
+    # allow using user paths by expanding tilde
+    path_imgrec = os.path.expanduser(path_imgrec)
+    path_imgidx = os.path.expanduser(path_imgidx)
     imgrec = mx.recordio.MXIndexedRecordIO(path_imgidx, path_imgrec, 'r')  # pylint: disable=redefined-variable-type
     rec_list.append(imgrec)
   id_list_map = {}
@@ -159,9 +154,12 @@ def main(args):
         id_item = id_list[i]
         y = id_item[2]
         sim = np.dot(X, y.T)
-        idx = np.where(sim>=args.similarity_threshold)[0]
+        idx = np.where(sim>=args.similarity_upper_threshold_include)[0]
         if len(idx)>0:
           continue
+        idx = np.where(sim>=args.similarity_lower_threshold_include)[0]
+        if len(idx)>0:
+          print('possible duplicate:', idx)
         all_id_list.append(id_item)
       print(ds_id, len(id_list), len(all_id_list))
 
@@ -206,25 +204,6 @@ def main(args):
         embedding /= _norm
         _id_list.append( (i, i, embedding) )
 
-    #X = []
-    #for id_item in all_id_list:
-    #  X.append(id_item[2])
-    #X = np.array(X)
-    #similarity_threshold = 0.3
-    #while similarity_threshold<=1.01:
-    #  emap = {}
-    #  for id_item in _id_list:
-    #    y = id_item[2]
-    #    sim = np.dot(X, y.T)
-    #    #print(sim.shape)
-    #    #print(sim)
-    #    idx = np.where(sim>=similarity_threshold)[0]
-    #    for j in idx:
-    #      emap[j] = 1
-    #  exclude_removed = len(emap)
-    #  print(similarity_threshold, exclude_removed)
-    #  similarity_threshold+=0.05
-
       X = []
       for id_item in all_id_list:
         X.append(id_item[2])
@@ -233,7 +212,7 @@ def main(args):
       for id_item in _id_list:
         y = id_item[2]
         sim = np.dot(X, y.T)
-        idx = np.where(sim>=args.param2)[0]
+        idx = np.where(sim>=args.similarity_threshold_exclude)[0]
         for j in idx:
           emap[j] = 1
           all_id_list[j][1] = -1
@@ -286,7 +265,8 @@ if __name__ == '__main__':
   parser.add_argument('--output', default='', type=str, help='')
   parser.add_argument('--model', default='../model/softmax,50', help='path to load model.')
   parser.add_argument('--batch-size', default=32, type=int, help='')
-  parser.add_argument('--similarity_threshold_include', default=0.3, type=float, help='')
+  parser.add_argument('--similarity_lower_threshold_include', default=0.3, type=float, help='any pair with similarity lower than this threshold is considered not a match.')
+  parser.add_argument('--similarity_upper_threshold_include', default=0.7, type=float, help='any pair with similarity higher than this threshold is considered a match.')
   parser.add_argument('--similarity_threshold_exclude', default=0.4, type=float, help='')
   parser.add_argument('--mode', default=1, type=int, help='')
   parser.add_argument('--test', default=0, type=int, help='')
