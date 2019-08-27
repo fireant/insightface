@@ -95,8 +95,7 @@ def main(args):
                             img = facenet.to_rgb(img)
                         img = img[:,:,0:3]
     
-                        bounding_boxes, landmarks = detect_face.detect_face(img, minsize, pnet, rnet, onet, threshold, factor)
-                        print('landmarks:', landmarks)
+                        bounding_boxes, _ = detect_face.detect_face(img, minsize, pnet, rnet, onet, threshold, factor)
                         nrof_faces = bounding_boxes.shape[0]
                         if nrof_faces>0:
                             det = bounding_boxes[:,0:4]
@@ -118,6 +117,8 @@ def main(args):
                             scaled = misc.imresize(cropped, (args.image_size, args.image_size), interp='bilinear')
                             nrof_successfully_aligned += 1
                             misc.imsave(output_filename, scaled)
+                            _, landmarks = detect_face.detect_face(scaled, minsize, pnet, rnet, onet, threshold, factor)
+                            print('landmarks:', landmarks)
                             text_file.write('%s\t%d\t%d\t%d\t%d\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\n' % (output_filename, bb[0], bb[1], bb[2], bb[3], 
                                                                                                             landmarks[0][0], landmarks[5][0],
                                                                                                             landmarks[1][0], landmarks[6][0],
