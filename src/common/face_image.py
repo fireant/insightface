@@ -7,8 +7,11 @@ import numpy as np
 
 def load_property(data_dir):
   prop = edict()
+  print('data_dir', data_dir)
   for line in open(os.path.join(data_dir, 'property')):
+    print('line', line)
     vec = line.strip().split(',')
+    print('vec', vec)
     assert len(vec)==3
     prop.num_classes = int(vec[0])
     prop.image_size = [int(vec[1]), int(vec[2])]
