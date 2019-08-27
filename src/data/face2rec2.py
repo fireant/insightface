@@ -52,9 +52,12 @@ def read_list(path_in):
                 break
             item = edict()
             item.flag = 0
+            print('face', face_preprocess.parse_lst_line(line))
+            print('line read_list', line)
+
             item.image_path, label, item.bbox, item.landmark, item.aligned = face_preprocess.parse_lst_line(line)
             if not item.aligned and item.landmark is None:
-              #print('ignore line', line)
+              print('ignore line', line)
               continue
             item.id = _id
             item.label = [label, item.aligned]
@@ -65,25 +68,25 @@ def read_list(path_in):
               last[0] = label
               last[1] = _id
             _id+=1
-        identities.append( (last[1], _id) )
-        item = edict()
-        item.flag = 2
-        item.id = 0
-        item.label = [float(_id), float(_id+len(identities))]
-        yield item
-        for identity in identities:
-          item = edict()
-          item.flag = 2
-          item.id = _id
-          _id+=1
-          item.label = [float(identity[0]), float(identity[1])]
-          yield item
+        # identities.append( (last[1], _id) )
+        # item = edict()
+        # item.flag = 2
+        # item.id = 0
+        # item.label = [float(_id), float(_id+len(identities))]
+        # yield item
+        # for identity in identities:
+        #   item = edict()
+        #   item.flag = 0
+        #   item.id = _id
+        #   _id+=1
+        #   item.label = [float(identity[0]), float(identity[1])]
+        #   yield item
 
 
 
 def image_encode(args, i, item, q_out):
     oitem = [item.id]
-    #print('flag', item.flag)
+    print('flag', item.flag)
     if item.flag==0:
       fullpath = item.image_path
       header = mx.recordio.IRHeader(item.flag, item.label, item.id, 0)
@@ -202,6 +205,7 @@ if __name__ == '__main__':
             working_dir = args.prefix
         else:
             working_dir = os.path.dirname(args.prefix)
+        print('working_dir', working_dir)
         prop = face_image.load_property(working_dir)
         image_size = prop.image_size
         print('image_size', image_size)
@@ -216,7 +220,8 @@ if __name__ == '__main__':
                 count += 1
                 image_list = read_list(fname)
                 # -- write_record -- #
-                if args.num_thread > 1 and multiprocessing is not None:
+                if False:
+                    # if args.num_thread > 1 and multiprocessing is not None:
                     q_in = [multiprocessing.Queue(1024) for i in range(args.num_thread)]
                     q_out = multiprocessing.Queue(1024)
                     read_process = [multiprocessing.Process(target=read_worker, args=(args, q_in[i], q_out)) \
@@ -245,12 +250,17 @@ if __name__ == '__main__':
                     fname = os.path.basename(fname)
                     fname_rec = os.path.splitext(fname)[0] + '.rec'
                     fname_idx = os.path.splitext(fname)[0] + '.idx'
+                    print('tt 1')
                     record = mx.recordio.MXIndexedRecordIO(os.path.join(working_dir, fname_idx),
                                                            os.path.join(working_dir, fname_rec), 'w')
                     cnt = 0
+                    print('tt 2')
                     pre_time = time.time()
+                    print('tt 3')
                     for i, item in enumerate(image_list):
+                        print('item', i, ':', item)
                         image_encode(args, i, item, q_out)
+                        print('tt 4')
                         if q_out.empty():
                             continue
                         _, s, item = q_out.get()
