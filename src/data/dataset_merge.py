@@ -27,12 +27,14 @@ def get_embedding(args, imgrec, id, image_size, model):
   s = imgrec.read_idx(id)
   header, _ = mx.recordio.unpack(s)
   ocontents = []
-  for idx in xrange(int(header.label[0]), int(header.label[1])):
-    #print('idx', idx)
+  # print('** get_embedding:', int(header.label[0]), int(header.label[1]))
+  # for idx in range(int(imgrec.keys[0]), int(imgrec.keys[-1])):
+  for idx in range(int(id), int(id)+1):
+    print('** get_embedding idx', idx)
     s = imgrec.read_idx(idx)
     ocontents.append(s)
   embeddings = None
-  #print(len(ocontents))
+  print('len(ocontents)', len(ocontents))
   ba = 0
   while True:
     bb = min(ba+args.batch_size, len(ocontents))
@@ -66,8 +68,12 @@ def get_embedding(args, imgrec, id, image_size, model):
     embeddings[ba:bb,:] = net_out[0:_batch_size,:]
     ba = bb
   embeddings = sklearn.preprocessing.normalize(embeddings)
+  print('get_embedding:embeddings.shape:', embeddings.shape)
   embedding = np.mean(embeddings, axis=0, keepdims=True)
+  print('get_embedding:embedding.shape:', embedding.shape)
   embedding = sklearn.preprocessing.normalize(embedding).flatten()
+  print('get_embedding:embedding.shape:', embedding.shape)
+  print('get_embedding:', embedding)
   return embedding
 
 def main(args):
@@ -82,7 +88,7 @@ def main(args):
     if 'CUDA_VISIBLE_DEVICES' in os.environ:
       cvd = os.environ['CUDA_VISIBLE_DEVICES'].strip()
     if len(cvd)>0:
-      for i in xrange(len(cvd.split(','))):
+      for i in range(len(cvd.split(','))):
         ctx.append(mx.gpu(i))
     if len(ctx)==0:
       ctx = [mx.cpu()]
@@ -111,25 +117,33 @@ def main(args):
     # allow using user paths by expanding tilde
     path_imgrec = os.path.expanduser(path_imgrec)
     path_imgidx = os.path.expanduser(path_imgidx)
+    print('path_imgrec:', path_imgrec)
     imgrec = mx.recordio.MXIndexedRecordIO(path_imgidx, path_imgrec, 'r')  # pylint: disable=redefined-variable-type
+    print('imgrec:', imgrec)
     rec_list.append(imgrec)
   id_list_map = {}
   all_id_list = []
   test_limit = 0
-  for ds_id in xrange(len(rec_list)):
+  for ds_id in  range(len(rec_list)):
     id_list = []
     imgrec = rec_list[ds_id]
-    s = imgrec.read_idx(0)
+    print('----',ds_id,'----')
+    print('imgrec:', imgrec)
+    print('keys:', imgrec.keys)
+    s = imgrec.read_idx(imgrec.keys[0])
+    # s = imgrec.read()
     header, _ = mx.recordio.unpack(s)
+    print('header:', header)
     assert header.flag>0
     print('header0 label', header.label)
     header0 = (int(header.label[0]), int(header.label[1]))
     #assert(header.flag==1)
     imgidx = range(1, int(header.label[0]))
     id2range = {}
-    seq_identity = range(int(header.label[0]), int(header.label[1]))
+    print('** get_embedding:', int(header.label[0]), int(header.label[1]))
+    # seq_identity = range(int(header.label[0]), int(header.label[1]))
     pp=0
-    for identity in seq_identity:
+    for identity in imgrec.keys:
       pp+=1
       if pp%10==0:
         print('processing id', pp)
@@ -150,10 +164,11 @@ def main(args):
       for id_item in all_id_list:
         X.append(id_item[2])
       X = np.array(X)
-      for i in xrange(len(id_list)):
+      for i in range(len(id_list)):
         id_item = id_list[i]
         y = id_item[2]
         sim = np.dot(X, y.T)
+        print('sim:', sim)
         idx = np.where(sim>=args.similarity_upper_threshold_include)[0]
         if len(idx)>0:
           continue
@@ -194,7 +209,7 @@ def main(args):
       data_set = verification.load_bin(args.exclude, image_size)[0][0]
       print(data_set.shape)
       data = nd.zeros( (1,3,image_size[0], image_size[1]))
-      for i in xrange(data_set.shape[0]):
+      for i in range(data_set.shape[0]):
         data[0] = data_set[i]
         db = mx.io.DataBatch(data=(data,))
         model.forward(db, is_train=False)
