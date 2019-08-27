@@ -31,8 +31,9 @@ import os
 import argparse
 import tensorflow as tf
 import numpy as np
-import facenet
-import align.detect_face
+#import facenet
+import facenet.src.facenet as facenet
+import detect_face
 import random
 from time import sleep
 
@@ -52,7 +53,7 @@ def main(args):
         gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=args.gpu_memory_fraction)
         sess = tf.Session(config=tf.ConfigProto(gpu_options=gpu_options, log_device_placement=False))
         with sess.as_default():
-            pnet, rnet, onet = align.detect_face.create_mtcnn(sess, None)
+            pnet, rnet, onet = detect_face.create_mtcnn(sess, None)
     
     minsize = 20 # minimum size of face
     threshold = [ 0.6, 0.7, 0.7 ]  # three steps's threshold
@@ -63,6 +64,7 @@ def main(args):
     bounding_boxes_filename = os.path.join(output_dir, 'bounding_boxes_%05d.txt' % random_key)
     
     with open(bounding_boxes_filename, "w") as text_file:
+        print('text_file:', bounding_boxes_filename)
         nrof_images_total = 0
         nrof_successfully_aligned = 0
         if args.random_order:
@@ -93,7 +95,8 @@ def main(args):
                             img = facenet.to_rgb(img)
                         img = img[:,:,0:3]
     
-                        bounding_boxes, _ = align.detect_face.detect_face(img, minsize, pnet, rnet, onet, threshold, factor)
+                        bounding_boxes, landmarks = detect_face.detect_face(img, minsize, pnet, rnet, onet, threshold, factor)
+                        print('landmarks:', landmarks)
                         nrof_faces = bounding_boxes.shape[0]
                         if nrof_faces>0:
                             det = bounding_boxes[:,0:4]
@@ -115,7 +118,12 @@ def main(args):
                             scaled = misc.imresize(cropped, (args.image_size, args.image_size), interp='bilinear')
                             nrof_successfully_aligned += 1
                             misc.imsave(output_filename, scaled)
-                            text_file.write('%s %d %d %d %d\n' % (output_filename, bb[0], bb[1], bb[2], bb[3]))
+                            text_file.write('%s\t%d\t%d\t%d\t%d\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\n' % (output_filename, bb[0], bb[1], bb[2], bb[3], 
+                                                                                                            landmarks[0][0], landmarks[5][0],
+                                                                                                            landmarks[1][0], landmarks[6][0],
+                                                                                                            landmarks[2][0], landmarks[7][0],
+                                                                                                            landmarks[3][0], landmarks[8][0],
+                                                                                                            landmarks[4][0], landmarks[9][0]))
                         else:
                             print('Unable to align "%s"' % image_path)
                             text_file.write('%s\n' % (output_filename))
