@@ -3,6 +3,7 @@ import cv2
 import numpy as np
 from skimage import transform as trans
 
+# aligned file_path label/identity? bbox1 bbox2 bbox3 bbox4 landmark1 .. landmark10
 def parse_lst_line(line):
   vec = line.strip().split("\t")
   assert len(vec)>=3
@@ -11,18 +12,23 @@ def parse_lst_line(line):
   label = int(vec[2])
   bbox = None
   landmark = None
-  #print(vec)
+  print('vec', vec)
+
+  bbox = None
+  landmark = None
+  # aligned = False
+
   if len(vec)>3:
     bbox = np.zeros( (4,), dtype=np.int32)
-    for i in xrange(3,7):
+    for i in range(3,7):
       bbox[i-3] = int(vec[i])
     landmark = None
     if len(vec)>7:
       _l = []
-      for i in xrange(7,17):
+      for i in range(7,17):
         _l.append(float(vec[i]))
       landmark = np.array(_l).reshape( (2,5) ).T
-  #print(aligned)
+  print(aligned)
   return image_path, label, bbox, landmark, aligned
 
 
