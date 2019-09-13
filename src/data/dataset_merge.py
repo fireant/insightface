@@ -31,7 +31,8 @@ def get_embedding(args, imgrec, id, image_size, model):
   # print('** get_embedding:', int(header.label[0]), int(header.label[1]))
   # for idx in range(int(imgrec.keys[0]), int(imgrec.keys[-1])):
   # for idx in range(int(id), int(id)+1):
-  for idx in xrange(int(header.label[0]), int(header.label[1])):
+  upper_image_index = min(args.max_image_per_identity_in_embedding + int(header.label[0]), int(header.label[1]))
+  for idx in xrange(int(header.label[0]), upper_image_index):
     # print('** get_embedding idx', idx)
     s = imgrec.read_idx(idx)
     ocontents.append(s)
@@ -306,6 +307,7 @@ if __name__ == '__main__':
   parser.add_argument('--batch-size', default=32, type=int, help='')
   parser.add_argument('--similarity_lower_threshold_include', default=0.3, type=float, help='any pair with similarity lower than this threshold is considered not a match.')
   parser.add_argument('--similarity_upper_threshold_include', default=0.7, type=float, help='any pair with similarity higher than this threshold is considered a match.')
+  parser.add_argument('--max_image_per_identity_in_embedding', default=10, type=int, help='the cap on the number of images used per identity to compute the average embedding vector.')
   parser.add_argument('--similarity_threshold_exclude', default=0.4, type=float, help='')
   parser.add_argument('--mode', default=1, type=int, help='')
   parser.add_argument('--test', default=0, type=int, help='')
