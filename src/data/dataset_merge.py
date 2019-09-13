@@ -14,6 +14,7 @@ import cv2
 import time
 import sklearn
 import numpy as np
+import csv
 
 sys.path.append(os.path.join(os.path.dirname(__file__),'..', 'common'))
 import face_image
@@ -29,12 +30,13 @@ def get_embedding(args, imgrec, id, image_size, model):
   ocontents = []
   # print('** get_embedding:', int(header.label[0]), int(header.label[1]))
   # for idx in range(int(imgrec.keys[0]), int(imgrec.keys[-1])):
-  for idx in range(int(id), int(id)+1):
-    print('** get_embedding idx', idx)
+  # for idx in range(int(id), int(id)+1):
+  for idx in xrange(int(header.label[0]), int(header.label[1])):
+    # print('** get_embedding idx', idx)
     s = imgrec.read_idx(idx)
     ocontents.append(s)
   embeddings = None
-  print('len(ocontents)', len(ocontents))
+  # print('len(ocontents)', len(ocontents))
   ba = 0
   while True:
     bb = min(ba+args.batch_size, len(ocontents))
@@ -68,12 +70,12 @@ def get_embedding(args, imgrec, id, image_size, model):
     embeddings[ba:bb,:] = net_out[0:_batch_size,:]
     ba = bb
   embeddings = sklearn.preprocessing.normalize(embeddings)
-  print('get_embedding:embeddings.shape:', embeddings.shape)
+  # print('get_embedding:embeddings.shape:', embeddings.shape)
   embedding = np.mean(embeddings, axis=0, keepdims=True)
-  print('get_embedding:embedding.shape:', embedding.shape)
+  # print('get_embedding:embedding.shape:', embedding.shape)
   embedding = sklearn.preprocessing.normalize(embedding).flatten()
-  print('get_embedding:embedding.shape:', embedding.shape)
-  print('get_embedding:', embedding)
+  # print('get_embedding:embedding.shape:', embedding.shape)
+  # print('get_embedding:', embedding)
   return embedding
 
 def main(args):
@@ -88,7 +90,7 @@ def main(args):
     if 'CUDA_VISIBLE_DEVICES' in os.environ:
       cvd = os.environ['CUDA_VISIBLE_DEVICES'].strip()
     if len(cvd)>0:
-      for i in range(len(cvd.split(','))):
+      for i in xrange(len(cvd.split(','))):
         ctx.append(mx.gpu(i))
     if len(ctx)==0:
       ctx = [mx.cpu()]
@@ -117,33 +119,33 @@ def main(args):
     # allow using user paths by expanding tilde
     path_imgrec = os.path.expanduser(path_imgrec)
     path_imgidx = os.path.expanduser(path_imgidx)
-    print('path_imgrec:', path_imgrec)
+    # print('path_imgrec:', path_imgrec)
     imgrec = mx.recordio.MXIndexedRecordIO(path_imgidx, path_imgrec, 'r')  # pylint: disable=redefined-variable-type
-    print('imgrec:', imgrec)
+    # print('imgrec:', imgrec)
     rec_list.append(imgrec)
   id_list_map = {}
   all_id_list = []
   test_limit = 0
-  for ds_id in  range(len(rec_list)):
+  for ds_id in xrange(len(rec_list)):
     id_list = []
     imgrec = rec_list[ds_id]
-    print('----',ds_id,'----')
-    print('imgrec:', imgrec)
-    print('keys:', imgrec.keys)
-    s = imgrec.read_idx(imgrec.keys[0])
+    # print('----',ds_id,'----')
+    # print('imgrec:', imgrec)
+    # print('keys:', imgrec.keys)
+    s = imgrec.read_idx(0)
     # s = imgrec.read()
     header, _ = mx.recordio.unpack(s)
-    print('header:', header)
+    # print('header:', header)
     assert header.flag>0
     print('header0 label', header.label)
     header0 = (int(header.label[0]), int(header.label[1]))
     #assert(header.flag==1)
     imgidx = range(1, int(header.label[0]))
     id2range = {}
-    print('** get_embedding:', int(header.label[0]), int(header.label[1]))
-    # seq_identity = range(int(header.label[0]), int(header.label[1]))
+    # print('** get_embedding:', int(header.label[0]), int(header.label[1]))
+    seq_identity = range(int(header.label[0]), int(header.label[1]))
     pp=0
-    for identity in imgrec.keys:
+    for identity in seq_identity:
       pp+=1
       if pp%10==0:
         print('processing id', pp)
@@ -164,17 +166,34 @@ def main(args):
       for id_item in all_id_list:
         X.append(id_item[2])
       X = np.array(X)
-      for i in range(len(id_list)):
+      for i in xrange(len(id_list)):
         id_item = id_list[i]
         y = id_item[2]
         sim = np.dot(X, y.T)
-        print('sim:', sim)
+        # print('sim:', sim)
         idx = np.where(sim>=args.similarity_upper_threshold_include)[0]
+        # we are confident this identity already exists in the set
         if len(idx)>0:
           continue
         idx = np.where(sim>=args.similarity_lower_threshold_include)[0]
+        # this identity might not exist in the set, let's manually check that
+        line = []
         if len(idx)>0:
-          print('possible duplicate:', idx)
+          # print('possible duplicate:', idx)
+          # store in the file the current set path, current identity, [possible duplicate set path, possible duplicate identity]xn
+          # where n is number of possible duplicates found
+          line.append(include_datasets[ds_id])
+          line.append(id_item[1])
+          for duplicate_id in idx:
+            duplicate_dataset_index = all_id_list[duplicate_id][0]
+            line.append(include_datasets[duplicate_dataset_index])
+            duplicate_identity = all_id_list[duplicate_id][1]
+            line.append(duplicate_identity)
+          with open('duplicates.csv', 'a') as csv_file:
+              writer = csv.writer(csv_file, delimiter = ',')
+              # print('line: ',line)
+              writer.writerows([line])
+          continue
         all_id_list.append(id_item)
       print(ds_id, len(id_list), len(all_id_list))
 
@@ -273,6 +292,11 @@ def main(args):
     f.write("%d,%d,%d"%(len(identities), image_size[0], image_size[1]))
 
 if __name__ == '__main__':
+  try:
+    os.remove('duplicates.csv')
+  except OSError:
+    pass
+
   parser = argparse.ArgumentParser(description='do dataset merge')
   # general
   parser.add_argument('--include', default='', type=str, help='')
