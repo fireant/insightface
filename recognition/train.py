@@ -66,6 +66,7 @@ def parse_args():
   return args
 
 # loads a model and add the loss layer.
+# TODO: understand how the loss functions are implemented
 def get_symbol(args):
   embedding = eval(config.net_name).get_symbol()
   all_label = mx.symbol.Variable('softmax_label')
