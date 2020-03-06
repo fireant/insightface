@@ -14,12 +14,17 @@ import mxnet as mx
 from mxnet import ndarray as nd
 import argparse
 import mxnet.optimizer as optimizer
+# see https://github.com/fireant/insightface/blob/master/recognition/sample_config.py 
+# config.config is an EasyDict
 from config import config, default, generate_config
+# AccMetric and LossValueMetric
 from metric import *
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'common'))
 import flops_counter
+
 sys.path.append(os.path.join(os.path.dirname(__file__), 'eval'))
 import verification
+
 sys.path.append(os.path.join(os.path.dirname(__file__), 'symbol'))
 import fresnet
 import fmobilefacenet
@@ -54,13 +59,13 @@ def parse_args():
   parser.add_argument('--lr-steps', type=str, default=default.lr_steps, help='steps of lr changing')
   parser.add_argument('--wd', type=float, default=default.wd, help='weight decay')
   parser.add_argument('--mom', type=float, default=default.mom, help='momentum')
-  parser.add_argument('--frequent', type=int, default=default.frequent, help='')
+  parser.add_argument('--frequent', type=int, default=default.frequent, help='Specifies how frequently training speed and evaluation metrics must be logged, after n number of epoches.')
   parser.add_argument('--per-batch-size', type=int, default=default.per_batch_size, help='batch size in each context')
   parser.add_argument('--kvstore', type=str, default=default.kvstore, help='kvstore setting')
   args = parser.parse_args()
   return args
 
-
+# loads a model and add the loss layer.
 def get_symbol(args):
   embedding = eval(config.net_name).get_symbol()
   all_label = mx.symbol.Variable('softmax_label')
@@ -183,6 +188,9 @@ def train_net(args):
     data_shape = (args.image_channel,image_size[0],image_size[1])
     mean = None
 
+    ################################
+    ## Load the model
+    ################################
     begin_epoch = 0
     if len(args.pretrained)==0:
       arg_params = None
@@ -211,6 +219,11 @@ def train_net(args):
     )
     val_dataiter = None
 
+    ################################
+    
+    ################################
+    ## Initializer the training data loader
+    ################################
     if config.loss_name.find('triplet')>=0:
       from triplet_image_iter import FaceImageIter
       triplet_params = [config.triplet_bag_size, config.triplet_alpha, config.triplet_max_ap]
@@ -247,7 +260,11 @@ def train_net(args):
       if config.ce_loss:
         metric2 = LossValueMetric()
         eval_metrics.append( mx.metric.create(metric2) )
+    ################################
 
+    ################################
+    ## set the weight initializer and optimizer params
+    ################################
     if config.net_name=='fresnet' or config.net_name=='fmobilefacenet':
       initializer = mx.init.Xavier(rnd_type='gaussian', factor_type="out", magnitude=2) #resnet style
     else:
@@ -256,6 +273,7 @@ def train_net(args):
     _rescale = 1.0/args.ctx_num
     opt = optimizer.SGD(learning_rate=args.lr, momentum=args.mom, wd=args.wd, rescale_grad=_rescale)
     _cb = mx.callback.Speedometer(args.batch_size, args.frequent)
+    ################################
 
     ver_list = []
     ver_name_list = []
