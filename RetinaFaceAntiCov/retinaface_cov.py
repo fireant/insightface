@@ -8,20 +8,17 @@ import mxnet as mx
 from mxnet import ndarray as nd
 import cv2
 #from rcnn import config
-from rcnn.logger import logger
 #from rcnn.processing.bbox_transform import nonlinear_pred, clip_boxes, landmark_pred
 from rcnn.processing.bbox_transform import clip_boxes
 from rcnn.processing.generate_anchor import generate_anchors_fpn, anchors_plane
 from rcnn.processing.nms import gpu_nms_wrapper, cpu_nms_wrapper
 from rcnn.processing.bbox_transform import bbox_overlaps
 
-class RetinaFace:
-  def __init__(self, prefix, epoch, ctx_id=0, network='net3', nms=0.4, nocrop=False, decay4 = 0.5, vote=False):
+class RetinaFaceCoV:
+  def __init__(self, prefix, epoch, ctx_id=0, network='net3', nms=0.4, nocrop=False):
     self.ctx_id = ctx_id
     self.network = network
-    self.decay4 = decay4
     self.nms_threshold = nms
-    self.vote = vote
     self.nocrop = nocrop
     self.debug = False
     self.fpn_keys = []
@@ -29,6 +26,8 @@ class RetinaFace:
     pixel_means=[0.0, 0.0, 0.0]
     pixel_stds=[1.0, 1.0, 1.0]
     pixel_scale = 1.0
+    self.bbox_stds = [1.0, 1.0, 1.0, 1.0]
+    self.landmark_std = 1.0
     self.preprocess = False
     _ratio = (1.,)
     fmc = 3
@@ -37,6 +36,9 @@ class RetinaFace:
       self.preprocess = True
     elif network=='net3':
       _ratio = (1.,)
+    elif network=='net3l':
+      _ratio = (1.,)
+      self.landmark_std = 0.2
     elif network=='net3a':
       _ratio = (1.,1.5)
     elif network=='net6': #like pyramidbox or s3fd
@@ -107,7 +109,7 @@ class RetinaFace:
         value['SCALES'] = tuple(scales)
         self.anchor_cfg[key] = value
 
-    print(self._feat_stride_fpn, self.anchor_cfg)
+    #print(self._feat_stride_fpn, self.anchor_cfg)
 
     for s in self._feat_stride_fpn:
         self.fpn_keys.append('stride%s'%s)
@@ -133,25 +135,16 @@ class RetinaFace:
     self.pixel_means = np.array(pixel_means, dtype=np.float32)
     self.pixel_stds = np.array(pixel_stds, dtype=np.float32)
     self.pixel_scale = float(pixel_scale)
-    print('means', self.pixel_means)
-    self.use_landmarks = False
-    if len(sym)//len(self._feat_stride_fpn)>=3:
-      self.use_landmarks = True
-    print('use_landmarks', self.use_landmarks)
+    #print('means', self.pixel_means)
+    self.use_landmarks = True
+    #print('use_landmarks', self.use_landmarks)
     self.cascade = 0
-    if float(len(sym))//len(self._feat_stride_fpn)>3.0:
-      self.cascade = 1
-    print('cascade', self.cascade)
-    #self.bbox_stds = [0.1, 0.1, 0.2, 0.2]
-    #self.landmark_std = 0.1
-    self.bbox_stds = [1.0, 1.0, 1.0, 1.0]
-    self.landmark_std = 1.0
 
     if self.debug:
       c = len(sym)//len(self._feat_stride_fpn)
       sym = sym[(c*0):]
       self._feat_stride_fpn = [32,16,8]
-    print('sym size:', len(sym))
+    #print('sym size:', len(sym))
 
     image_size = (640, 640)
     self.model = mx.mod.Module(symbol=sym, context=self.ctx, label_names = None)
@@ -174,6 +167,7 @@ class RetinaFace:
     #print('in_detect', threshold, scales, do_flip, do_nms)
     proposals_list = []
     scores_list = []
+    mask_scores_list = []
     landmarks_list = []
     strides_list = []
     timea = datetime.datetime.now()
@@ -240,19 +234,21 @@ class RetinaFace:
               _key = 'stride%s'%s
               stride = int(s)
               is_cascade = False
-              if self.cascade:
-                is_cascade = True
               #if self.vote and stride==4 and len(scales)>2 and (im_scale==scales[0]):
               #  continue
               #print('getting', im_scale, stride, idx, len(net_out), data.shape, file=sys.stderr)
               scores = net_out[sym_idx].asnumpy()
+              type_scores = net_out[sym_idx+3].asnumpy()
+              print(scores.shape, type_scores.shape)
               if self.debug:
                 timeb = datetime.datetime.now()
                 diff = timeb - timea
                 print('A uses', diff.total_seconds(), 'seconds')
+              A = self._num_anchors['stride%s'%s]
               #print(scores.shape)
               #print('scores',stride, scores.shape, file=sys.stderr)
-              scores = scores[:, self._num_anchors['stride%s'%s]:, :, :]
+              scores = scores[:, A:, :, :]
+              mask_scores = type_scores[:, A*2:, :, :] #x, A, x, x
 
               bbox_deltas = net_out[sym_idx+1].asnumpy()
 
@@ -263,7 +259,6 @@ class RetinaFace:
               #_height, _width = int(im_info[0] / stride), int(im_info[1] / stride)
               height, width = bbox_deltas.shape[2], bbox_deltas.shape[3]
 
-              A = self._num_anchors['stride%s'%s]
               K = height * width
               anchors_fpn = self._anchors_fpn['stride%s'%s]
               anchors = anchors_plane(height, width, stride, anchors_fpn)
@@ -279,6 +274,7 @@ class RetinaFace:
 
               #scores = self._clip_pad(scores, (height, width))
               scores = scores.transpose((0, 2, 3, 1)).reshape((-1, 1))
+              mask_scores = mask_scores.transpose((0, 2, 3, 1)).reshape((-1, 1))
 
               #print('pre', bbox_deltas.shape, height, width)
               #bbox_deltas = self._clip_pad(bbox_deltas, (height, width))
@@ -293,40 +289,6 @@ class RetinaFace:
               bbox_deltas[:, 3::4] = bbox_deltas[:,3::4] * self.bbox_stds[3]
               proposals = self.bbox_pred(anchors, bbox_deltas)
 
-
-              #print(anchors.shape, bbox_deltas.shape, A, K, file=sys.stderr)
-              if is_cascade:
-                cascade_sym_num = 0
-                cls_cascade = False
-                bbox_cascade = False
-                __idx = [3,4]
-                if not self.use_landmarks:
-                  __idx = [2,3]
-                for diff_idx in __idx:
-                  if sym_idx+diff_idx>=len(net_out):
-                    break
-                  body = net_out[sym_idx+diff_idx].asnumpy()
-                  if body.shape[1]//A==2: #cls branch
-                    if cls_cascade or bbox_cascade:
-                      break
-                    else:
-                      cascade_scores = body[:, self._num_anchors['stride%s'%s]:, :, :]
-                      cascade_scores = cascade_scores.transpose((0, 2, 3, 1)).reshape((-1, 1))
-                      #scores = (scores+cascade_scores)/2.0
-                      scores = cascade_scores #TODO?
-                      cascade_sym_num+=1
-                      cls_cascade = True
-                      #print('find cascade cls at stride', stride)
-                  elif body.shape[1]//A==4: #bbox branch
-                    cascade_deltas = body.transpose((0,2,3,1)).reshape( (-1, bbox_pred_len) )
-                    cascade_deltas[:, 0::4] = cascade_deltas[:,0::4] * self.bbox_stds[0]
-                    cascade_deltas[:, 1::4] = cascade_deltas[:,1::4] * self.bbox_stds[1]
-                    cascade_deltas[:, 2::4] = cascade_deltas[:,2::4] * self.bbox_stds[2]
-                    cascade_deltas[:, 3::4] = cascade_deltas[:,3::4] * self.bbox_stds[3]
-                    proposals = self.bbox_pred(proposals, cascade_deltas)
-                    cascade_sym_num+=1
-                    bbox_cascade = True
-                    #print('find cascade bbox at stride', stride)
 
 
               proposals = clip_boxes(proposals, im_info[:2])
@@ -349,6 +311,7 @@ class RetinaFace:
                 scores *= self.decay4
 
               scores_ravel = scores.ravel()
+              #mask_scores_ravel = mask_scores.ravel()
               #print('__shapes', proposals.shape, scores_ravel.shape)
               #print('max score', np.max(scores_ravel))
               order = np.where(scores_ravel>=threshold)[0]
@@ -357,6 +320,7 @@ class RetinaFace:
                 #order = order[_order]
               proposals = proposals[order, :]
               scores = scores[order]
+              mask_scores = mask_scores[order]
               if flip:
                 oldx1 = proposals[:, 0].copy()
                 oldx2 = proposals[:, 2].copy()
@@ -367,44 +331,35 @@ class RetinaFace:
 
               proposals_list.append(proposals)
               scores_list.append(scores)
-              if self.nms_threshold<0.0:
-                _strides = np.empty(shape=(scores.shape), dtype=np.float32)
-                _strides.fill(stride)
-                strides_list.append(_strides)
+              mask_scores_list.append(mask_scores)
 
-              if not self.vote and self.use_landmarks:
-                landmark_deltas = net_out[sym_idx+2].asnumpy()
-                #landmark_deltas = self._clip_pad(landmark_deltas, (height, width))
-                landmark_pred_len = landmark_deltas.shape[1]//A
-                landmark_deltas = landmark_deltas.transpose((0, 2, 3, 1)).reshape((-1, 5, landmark_pred_len//5))
-                landmark_deltas *= self.landmark_std
-                #print(landmark_deltas.shape, landmark_deltas)
-                landmarks = self.landmark_pred(anchors, landmark_deltas)
-                landmarks = landmarks[order, :]
+              landmark_deltas = net_out[sym_idx+2].asnumpy()
+              #landmark_deltas = self._clip_pad(landmark_deltas, (height, width))
+              landmark_pred_len = landmark_deltas.shape[1]//A
+              landmark_deltas = landmark_deltas.transpose((0, 2, 3, 1)).reshape((-1, 5, landmark_pred_len//5))
+              landmark_deltas *= self.landmark_std
+              #print(landmark_deltas.shape, landmark_deltas)
+              landmarks = self.landmark_pred(anchors, landmark_deltas)
+              landmarks = landmarks[order, :]
 
-                if flip:
-                  landmarks[:,:,0] = im.shape[1] - landmarks[:,:,0] - 1
-                  #for a in range(5):
-                  #  oldx1 = landmarks[:, a].copy()
-                  #  landmarks[:,a] = im.shape[1] - oldx1 - 1
-                  order = [1,0,2,4,3]
-                  flandmarks = landmarks.copy()
-                  for idx, a in enumerate(order):
-                    flandmarks[:,idx,:] = landmarks[:,a,:]
-                    #flandmarks[:, idx*2] = landmarks[:,a*2]
-                    #flandmarks[:, idx*2+1] = landmarks[:,a*2+1]
-                  landmarks = flandmarks
-                landmarks[:,:,0:2] /= im_scale
-                #landmarks /= im_scale
-                #landmarks = landmarks.reshape( (-1, landmark_pred_len) )
-                landmarks_list.append(landmarks)
-                #proposals = np.hstack((proposals, landmarks))
-              if self.use_landmarks:
-                sym_idx += 3
-              else:
-                sym_idx += 2
-              if is_cascade:
-                sym_idx += cascade_sym_num
+              if flip:
+                landmarks[:,:,0] = im.shape[1] - landmarks[:,:,0] - 1
+                #for a in range(5):
+                #  oldx1 = landmarks[:, a].copy()
+                #  landmarks[:,a] = im.shape[1] - oldx1 - 1
+                order = [1,0,2,4,3]
+                flandmarks = landmarks.copy()
+                for idx, a in enumerate(order):
+                  flandmarks[:,idx,:] = landmarks[:,a,:]
+                  #flandmarks[:, idx*2] = landmarks[:,a*2]
+                  #flandmarks[:, idx*2+1] = landmarks[:,a*2+1]
+                landmarks = flandmarks
+              landmarks[:,:,0:2] /= im_scale
+              #landmarks /= im_scale
+              #landmarks = landmarks.reshape( (-1, landmark_pred_len) )
+              landmarks_list.append(landmarks)
+              #proposals = np.hstack((proposals, landmarks))
+              sym_idx += 4
 
     if self.debug:
       timeb = datetime.datetime.now()
@@ -413,13 +368,10 @@ class RetinaFace:
     proposals = np.vstack(proposals_list)
     landmarks = None
     if proposals.shape[0]==0:
-      if self.use_landmarks:
-        landmarks = np.zeros( (0,5,2) )
-      if self.nms_threshold<0.0:
-        return np.zeros( (0,6) ), landmarks
-      else:
-        return np.zeros( (0,5) ), landmarks
+      landmarks = np.zeros( (0,5,2) )
+      return np.zeros( (0,6) ), landmarks
     scores = np.vstack(scores_list)
+    mask_scores = np.vstack(mask_scores_list)
     #print('shapes', proposals.shape, scores.shape)
     scores_ravel = scores.ravel()
     order = scores_ravel.argsort()[::-1]
@@ -428,28 +380,15 @@ class RetinaFace:
     #  order = order[:_count]
     proposals = proposals[order, :]
     scores = scores[order]
-    if self.nms_threshold<0.0:
-      strides = np.vstack(strides_list)
-      strides = strides[order]
-    if not self.vote and self.use_landmarks:
-      landmarks = np.vstack(landmarks_list)
-      landmarks = landmarks[order].astype(np.float32, copy=False)
+    mask_scores = mask_scores[order]
+    landmarks = np.vstack(landmarks_list)
+    landmarks = landmarks[order].astype(np.float32, copy=False)
 
-    if self.nms_threshold>0.0:
-      pre_det = np.hstack((proposals[:,0:4], scores)).astype(np.float32, copy=False)
-      if not self.vote:
-        keep = self.nms(pre_det)
-        det = np.hstack( (pre_det, proposals[:,4:]) )
-        det = det[keep, :]
-        if self.use_landmarks:
-          landmarks = landmarks[keep]
-      else:
-        det = np.hstack( (pre_det, proposals[:,4:]) )
-        det = self.bbox_vote(det)
-    elif self.nms_threshold<0.0:
-      det = np.hstack((proposals[:,0:4], scores, strides)).astype(np.float32, copy=False)
-    else:
-      det = np.hstack((proposals[:,0:4], scores)).astype(np.float32, copy=False)
+    pre_det = np.hstack((proposals[:,0:4], scores)).astype(np.float32, copy=False)
+    keep = self.nms(pre_det)
+    det = np.hstack( (pre_det, mask_scores) )
+    det = det[keep, :]
+    landmarks = landmarks[keep]
 
 
     if self.debug:
@@ -650,7 +589,7 @@ class RetinaFace:
       #preds = np.vstack(preds).transpose()
       #return preds
 
-  def bbox_vote(self, det):
+  def vote(self, det):
       #order = det[:, 4].ravel().argsort()[::-1]
       #det = det[order, :]
       if det.shape[0] == 0:
